@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pi Web Annotator</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <h1>Pi Web Annotator</h1>
+    <p id="bridge-status" class="bridge">Pi bridge: disconnected (standalone save available)</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="page-heading">
+      <h2 id="page-heading">Current page</h2>
+      <p id="page-detail" class="muted">Finding the active page…</p>
+      <button id="enable-button" type="button">Enable annotation on this page</button>
+    </section>
+
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <div id="error" role="alert" hidden></div>
+
+    <section aria-labelledby="draft-heading">
+      <h2 id="draft-heading">Selected targets</h2>
+      <div id="drafts"><p class="muted">Select an element on an enabled page.</p></div>
+    </section>
+
+    <section aria-labelledby="annotations-heading">
+      <h2 id="annotations-heading">Pending annotations <span id="annotation-count">0</span></h2>
+      <div id="annotations"><p class="muted">No annotations yet.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="cancel-button" class="secondary" type="button">Cancel session</button>
+    <button id="finish-button" type="button" disabled>Finish and save…</button>
+  </footer>
+
+  <script src="lib/constants.js"></script>
+  <script src="lib/annotations.js"></script>
+  <script src="lib/bundle.js"></script>
+  <script src="lib/filesystem.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "capture": {
+    "id": "20260916-175000Z",
+    "created_at": "2026-09-16T17:49:00.000Z",
+    "completed_at": "2026-09-16T17:50:00.000Z"
+  },
+  "generator": {
+    "name": "pi-web-annotator",
+    "version": "0.1.0"
+  },
+  "pages": [
+    {
+      "id": "page-0001",
+      "url": "https://example.com/one",
+      "title": "First page",
+      "annotations": [
+        {
+          "id": "annotation-0001",
+          "comment": "Clarify this heading.",
+          "created_at": "2026-09-16T17:49:10.000Z",
+          "updated_at": "2026-09-16T17:49:10.000Z",
+          "target": {
+            "css": { "value": "#heading", "truncated": false },
+            "xpath": { "value": "//*[@id=\"heading\"]", "truncated": false },
+            "tag_name": "h1",
+            "visible_text": { "value": "Welcome", "truncated": false },
+            "attributes": {
+              "items": { "id": { "value": "heading", "truncated": false } },
+              "truncated": false
+            },
+            "outer_html": { "value": "<h1 id=\"heading\">Welcome</h1>", "truncated": false },
+            "bounding_rect": { "x": 20, "y": 10, "width": 300, "height": 40, "top": 10, "right": 320, "bottom": 50, "left": 20 },
+            "scroll": { "x": 0, "y": 0 },
+            "viewport": { "width": 1280, "height": 720 },
+            "device_pixel_ratio": 2
+          },
+          "screenshot": { "path": "screenshots/annotation-0001.png", "media_type": "image/png", "bytes": 68 }
+        }
+      ]
+    },
+    {
+      "id": "page-0002",
+      "url": "http://localhost:3000/two",
+      "title": "Second page",
+      "annotations": [
+        {
+          "id": "annotation-0002",
+          "comment": "Align this button with the form.",
+          "created_at": "2026-09-16T17:49:20.000Z",
+          "updated_at": "2026-09-16T17:49:30.000Z",
+          "target": {
+            "css": { "value": "main > button", "truncated": false },
+            "xpath": { "value": "/html[1]/body[1]/main[1]/button[1]", "truncated": false },
+            "tag_name": "button",
+            "visible_text": { "value": "Submit", "truncated": false },
+            "attributes": {
+              "items": { "type": { "value": "submit", "truncated": false } },
+              "truncated": false
+            },
+            "outer_html": { "value": "<button type=\"submit\">Submit</button>", "truncated": false },
+            "bounding_rect": { "x": 20, "y": 500, "width": 120, "height": 40, "top": 500, "right": 140, "bottom": 540, "left": 20 },
+            "scroll": { "x": 0, "y": 400 },
+            "viewport": { "width": 1280, "height": 720 },
+            "device_pixel_ratio": 2
+          },
+          "screenshot": { "path": "screenshots/annotation-0002.png", "media_type": "image/png", "bytes": 68 }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "pi-web-annotator",
+  "version": "0.1.0",
+  "description": "A local Chromium companion for capturing structured web annotations for Pi.",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "README.md",
+    "browser-extension",
+    "extensions"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

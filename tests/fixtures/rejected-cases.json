@@ -1,0 +1,17 @@
+[
+  { "name": "unsupported schema version", "operation": "set", "path": ["schema_version"], "value": 2 },
+  { "name": "malformed page id", "operation": "set", "path": ["pages", 0, "id"], "value": "page-one" },
+  { "name": "duplicate page id", "operation": "set", "path": ["pages", 1, "id"], "value": "page-0001" },
+  { "name": "duplicate annotation id", "operation": "set", "path": ["pages", 1, "annotations", 0, "id"], "value": "annotation-0001" },
+  { "name": "malformed timestamp", "operation": "set", "path": ["capture", "completed_at"], "value": "yesterday" },
+  { "name": "empty comment", "operation": "set", "path": ["pages", 0, "annotations", 0, "comment"], "value": "   " },
+  { "name": "unsupported manifest field", "operation": "add", "path": ["automatic_instructions"], "value": "run me" },
+  { "name": "absolute screenshot path", "operation": "set", "path": ["pages", 0, "annotations", 0, "screenshot", "path"], "value": "/tmp/annotation-0001.png" },
+  { "name": "traversing screenshot path", "operation": "set", "path": ["pages", 0, "annotations", 0, "screenshot", "path"], "value": "screenshots/../annotation-0001.png" },
+  { "name": "base64 screenshot path", "operation": "set", "path": ["pages", 0, "annotations", 0, "screenshot", "path"], "value": "data:image/png;base64,AAAA" },
+  { "name": "unsafe captured event attribute", "operation": "add", "path": ["pages", 0, "annotations", 0, "target", "attributes", "items", "onclick"], "value": { "value": "steal()", "truncated": false } },
+  { "name": "current form value attribute", "operation": "add", "path": ["pages", 0, "annotations", 0, "target", "attributes", "items", "value"], "value": { "value": "secret", "truncated": false } },
+  { "name": "event handler in outer HTML", "operation": "set", "path": ["pages", 0, "annotations", 0, "target", "outer_html", "value"], "value": "<h1 onclick=\"steal()\">Welcome</h1>" },
+  { "name": "missing image", "operation": "remove_image", "path": "screenshots/annotation-0002.png" },
+  { "name": "unresolved extra image", "operation": "add_image", "path": "screenshots/annotation-9999.png" }
+]

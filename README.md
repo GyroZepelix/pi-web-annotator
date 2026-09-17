@@ -2,6 +2,8 @@
 
 Pi Web Annotator is a dependency-free Pi package with a Manifest V3 Brave companion. It collects bounded element comments and target-outlined viewport screenshots, then saves a transparent local bundle for a later Pi session to read by ordinary path.
 
+Repository: [github.com/GyroZepelix/pi-web-annotator](https://github.com/GyroZepelix/pi-web-annotator)
+
 The package has one guaranteed save mode and one capability-selected best-effort mode:
 
 - **Pi bridge (guaranteed):** interactive `/annotate` confirms a project destination and atomically saves the bundle in supported Brave.
@@ -30,7 +32,7 @@ pi install /absolute/path/to/pi-web-annotator
 A Git checkout can be installed with Pi's normal pinned Git package syntax:
 
 ```sh
-pi install git:github.com/OWNER/pi-web-annotator@COMMIT_OR_TAG
+pi install git:github.com/GyroZepelix/pi-web-annotator@COMMIT_OR_TAG
 ```
 
 For a one-run local trial without changing package settings:

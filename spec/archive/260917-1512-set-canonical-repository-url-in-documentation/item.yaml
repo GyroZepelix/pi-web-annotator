@@ -1,0 +1,17 @@
+schema_version: 2
+id: 260917-1512-set-canonical-repository-url-in-documentation
+title: Set canonical repository URL in documentation
+kind: work-item
+work_type: documentation
+parent: null
+route: quick-plan
+status: completed
+superseded_by: null
+created_at: '2026-09-17T15:12:16+02:00'
+updated_at: '2026-09-17T15:14:41+02:00'
+external_refs:
+- system: github
+  type: repository
+  key: GyroZepelix/pi-web-annotator
+  url: https://github.com/GyroZepelix/pi-web-annotator
+wiki_refs: []

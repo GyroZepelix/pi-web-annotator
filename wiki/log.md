@@ -34,3 +34,11 @@ Use this shape for new entries:
 - Wiki pages changed: `wiki/browser-annotator.md`, `wiki/index.md`, `wiki/log.md`, and `wiki/state.md`.
 - Verification: source and canonical plan were reconciled; `node --test` passed 64/64; package, Pi load, icon metadata, saved-bundle, spec, link/fence, protected-hash, and diff checks passed; focused and contract-quality reviews passed; live Brave workflow and final icon evidence passed.
 - Notes: durable guidance now reflects Brave-only guaranteed support, authenticated bridge saving, optional capability-gated standalone behavior, stable drafts, generated icon assets, and schema-v1 intake. Terminal archive remains pending explicit approval.
+
+## [2026-09-17] dream | web annotator lifecycle retrospective
+
+- Trigger: `/dream` run after successful Gamemaster completion and archival of `260916-1901-pi-web-annotator`.
+- Inputs: archived plan, refinements R001-R003, implementation packets, verification, outcome, per-spec ledger, and checkpoint commits `787bb2d4265347b3253f41c3c3b031d5b953a508` and `2e59e420421b6a919d856b6c7c53724c3d92280c`.
+- Wiki pages changed: `wiki/dreams/retrospectives/260916-1901-pi-web-annotator.md`, `wiki/observations.md`, and `wiki/log.md`.
+- Verification: retrospective helper created the lifecycle phase; memory safety, target links, phase uniqueness, scope boundaries, and `git diff --check` passed.
+- Notes: retained one tentative browser-extension planning observation; ordinary episodes, catalog, checkpoint ledger, dynamic guidance, pointers, index, and state remain unchanged.

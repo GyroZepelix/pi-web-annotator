@@ -11,6 +11,7 @@
   { "name": "base64 screenshot path", "operation": "set", "path": ["pages", 0, "annotations", 0, "screenshot", "path"], "value": "data:image/png;base64,AAAA" },
   { "name": "unsafe captured event attribute", "operation": "add", "path": ["pages", 0, "annotations", 0, "target", "attributes", "items", "onclick"], "value": { "value": "steal()", "truncated": false } },
   { "name": "current form value attribute", "operation": "add", "path": ["pages", 0, "annotations", 0, "target", "attributes", "items", "value"], "value": { "value": "secret", "truncated": false } },
+  { "name": "URL-bearing target attribute", "operation": "add", "path": ["pages", 0, "annotations", 0, "target", "attributes", "items", "href"], "value": { "value": "https://private.example/token", "truncated": false } },
   { "name": "event handler in outer HTML", "operation": "set", "path": ["pages", 0, "annotations", 0, "target", "outer_html", "value"], "value": "<h1 onclick=\"steal()\">Welcome</h1>" },
   { "name": "missing image", "operation": "remove_image", "path": "screenshots/annotation-0002.png" },
   { "name": "unresolved extra image", "operation": "add_image", "path": "screenshots/annotation-9999.png" }

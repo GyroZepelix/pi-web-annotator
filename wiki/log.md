@@ -26,3 +26,11 @@ Use this shape for new entries:
 - Wiki pages changed: `wiki/browser-annotator.md`, `wiki/dreams/MEMORY.md`, `wiki/dreams/2026-09-16-2023-gamemaster-checkpoint-260916-1901-pi-web-annotator-01-01.md`, `wiki/dreams/by-spec/260916-1901-pi-web-annotator.md`, `wiki/index.md`, and `wiki/log.md`.
 - Verification: re-read changed pages, checked relative links and exact checkpoint uniqueness, ran memory safety and pointer-budget scans, and ran `git diff --check`.
 - Notes: the stable browser contract was promoted to topic-specific guidance; live Google Chrome/Chromium verification remains pending for Current 02.01.
+
+## [2026-09-17] ingest | verified Brave annotator and Pi bridge
+
+- Trigger: Current 05.01 completed implementation, automated checks, live Brave acceptance, and medium-assurance focused plus whole-contract reviews.
+- Inputs: `browser-extension/`, `extensions/pi-web-annotator/`, `tests/`, `README.md`, `package.json`, work item `260916-1901-pi-web-annotator`, and its consolidated verification evidence.
+- Wiki pages changed: `wiki/browser-annotator.md`, `wiki/index.md`, `wiki/log.md`, and `wiki/state.md`.
+- Verification: source and canonical plan were reconciled; `node --test` passed 64/64; package, Pi load, icon metadata, saved-bundle, spec, link/fence, protected-hash, and diff checks passed; focused and contract-quality reviews passed; live Brave workflow and final icon evidence passed.
+- Notes: durable guidance now reflects Brave-only guaranteed support, authenticated bridge saving, optional capability-gated standalone behavior, stable drafts, generated icon assets, and schema-v1 intake. Terminal archive remains pending explicit approval.

@@ -9,6 +9,7 @@ Last lint date: none
 | Input | Type | Source | Processed date | Output pages | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `https://git.dgjalic.com/dgjalic/repo-wiki-template` | Protocol 2.0.0/schema-2 template installer | Forgejo repository | 2026-09-16 | `AGENTS.md`, `spec/`, `wiki/` | Installed lean repo wiki template. |
+| `260916-1901-pi-web-annotator` | Verified implementation and completion evidence | Source tree, archived plan, Current 05.01, verification, outcome | 2026-09-17 | `wiki/browser-annotator.md`, `wiki/index.md`, `wiki/log.md`, `wiki/state.md` | Updated durable memory from standalone-only T01 to the verified Brave companion and authenticated bridge; item archived completed. |
 
 ## Maintenance policy
 

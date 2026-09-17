@@ -3,7 +3,7 @@
   "name": "Pi Web Annotator",
   "description": "Capture bounded web element evidence for later local Pi sessions.",
   "version": "0.1.0",
-  "minimum_chrome_version": "114",
+  "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyIydPK7L6z8PhldiOJlThW8BBu+DO0FgxR73TGEqTiwe/2zBTeESvBjidQWGbxNdIc3McKx9ziU7qd/GTVvuTvH2ZsqByFnsgW75P21UQI1KYGszIkJw/Lb0kiL+sb0yHYkwUjo6BJ6gKx2V7XvdDJ8+5ewqby7tsWD8lbDu7Vnpx49JDVfY5w7tryRnMwNpOHkaAWIDJIPeYQqVeUNvLJtEGs6BM18WohFqRYbU3b4RoSu7vveYesrRRRz69IgAaKQUPQhFGzLfjNMs70/gcMdregkc2jGTFzbYB4Z+RztlUTFuGdHl12ysUr19K0DzKzEJ1g6PXfh7RWMRSVUfswIDAQAB",
   "permissions": [
     "activeTab",
@@ -14,8 +14,20 @@
   "host_permissions": [
     "http://127.0.0.1:43127/*"
   ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "action": {
-    "default_title": "Open Pi Web Annotator"
+    "default_title": "Open Pi Web Annotator",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "background": {
     "service_worker": "service-worker.js"

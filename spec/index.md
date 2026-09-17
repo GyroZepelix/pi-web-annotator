@@ -11,7 +11,6 @@ Repository-local planning and execution artifacts.
 <!-- spec-items:active:start -->
 | Item | Kind | Status | Updated |
 | --- | --- | --- | --- |
-| [Pi web annotator](./active/260916-1901-pi-web-annotator/plan.md) | work-item | planned | 2026-09-16 |
 <!-- spec-items:active:end -->
 
 ## Archive
@@ -19,6 +18,7 @@ Repository-local planning and execution artifacts.
 <!-- spec-items:archive:start -->
 | Item | Kind | Status | Updated |
 | --- | --- | --- | --- |
+| [Pi web annotator](./archive/260916-1901-pi-web-annotator/plan.md) | work-item | completed | 2026-09-17 |
 <!-- spec-items:archive:end -->
 
 ## Templates

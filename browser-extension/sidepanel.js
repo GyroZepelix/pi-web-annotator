@@ -3,6 +3,7 @@
 
   const filesystem = PiAnnotatorFilesystem;
   const elements = {
+    bridgeStatus: document.querySelector("#bridge-status"),
     pageDetail: document.querySelector("#page-detail"),
     enable: document.querySelector("#enable-button"),
     drafts: document.querySelector("#drafts"),
@@ -16,6 +17,7 @@
   let state = null;
   let activeTab = null;
   let busy = false;
+  const draftViews = new Map();
 
   function setError(message) {
     elements.error.textContent = message || "";
@@ -27,11 +29,21 @@
     elements.notice.hidden = !message;
   }
 
+  function standaloneSaveAvailable() {
+    return typeof window.showDirectoryPicker === "function";
+  }
+
+  function saveMode() {
+    if (state && state.bridge && state.bridge.status === "connected") return "bridge";
+    if (standaloneSaveAvailable()) return "standalone";
+    return "unavailable";
+  }
+
   function setBusy(value) {
     busy = value;
     elements.enable.disabled = value;
     elements.cancel.disabled = value;
-    elements.finish.disabled = value || !state || state.annotationCount === 0;
+    elements.finish.disabled = value || !state || state.annotationCount === 0 || saveMode() === "unavailable";
   }
 
   async function send(message) {
@@ -53,36 +65,55 @@
     return state.pages.find((page) => page.id === pageId);
   }
 
+  function createDraftView(draft) {
+    const card = document.createElement("form");
+    card.className = "card";
+    const context = document.createElement("p");
+    context.className = "meta";
+    const textarea = document.createElement("textarea");
+    textarea.required = true;
+    textarea.maxLength = PiAnnotatorConstants.LIMITS.commentCharacters;
+    textarea.placeholder = "Describe the requested change or observation…";
+    const submit = button("Accept comment and capture", () => {}, "");
+    submit.type = "submit";
+    card.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await runAction({ type: "ACCEPT_COMMENT", pageId: draft.pageId, comment: textarea.value });
+    });
+    card.append(context, textarea, submit);
+    return { card, context, textarea };
+  }
+
   function renderDrafts() {
-    elements.drafts.replaceChildren();
-    const drafts = Object.values(state.drafts);
+    const drafts = Object.values(state.drafts).filter((draft) => pageFor(draft.pageId));
+    const selectionIds = new Set(drafts.map((draft) => draft.selectionId));
+    for (const selectionId of draftViews.keys()) {
+      if (!selectionIds.has(selectionId)) draftViews.delete(selectionId);
+    }
+
     if (drafts.length === 0) {
       const empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = "Select an element on an enabled page.";
-      elements.drafts.append(empty);
+      elements.drafts.replaceChildren(empty);
       return;
     }
+
+    const cards = [];
     for (const draft of drafts) {
       const page = pageFor(draft.pageId);
       if (!page) continue;
-      const card = document.createElement("form");
-      card.className = "card";
-      const context = document.createElement("p");
-      context.className = "meta";
-      context.textContent = `${page.title || page.url} · <${draft.target.tag_name}>`;
-      const textarea = document.createElement("textarea");
-      textarea.required = true;
-      textarea.maxLength = PiAnnotatorConstants.LIMITS.commentCharacters;
-      textarea.placeholder = "Describe the requested change or observation…";
-      const submit = button("Accept comment and capture", () => {}, "");
-      submit.type = "submit";
-      card.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        await runAction({ type: "ACCEPT_COMMENT", pageId: draft.pageId, comment: textarea.value });
-      });
-      card.append(context, textarea, submit);
-      elements.drafts.append(card);
+      let view = draftViews.get(draft.selectionId);
+      if (!view) {
+        view = createDraftView(draft);
+        draftViews.set(draft.selectionId, view);
+      }
+      view.context.textContent = `${page.title || page.url} · <${draft.target.tag_name}>`;
+      cards.push(view.card);
+    }
+    const currentCards = Array.from(elements.drafts.children);
+    if (currentCards.length !== cards.length || currentCards.some((card, index) => card !== cards[index])) {
+      elements.drafts.replaceChildren(...cards);
     }
   }
 
@@ -133,6 +164,14 @@
 
   function render() {
     if (!state) return;
+    const mode = saveMode();
+    if (mode === "bridge") {
+      elements.bridgeStatus.textContent = "Pi bridge: connected (project-aware save)";
+    } else if (mode === "standalone") {
+      elements.bridgeStatus.textContent = "Pi bridge: disconnected (standalone save available)";
+    } else {
+      elements.bridgeStatus.textContent = "Pi bridge: disconnected. Finish is unavailable in this browser; run /annotate in an interactive Pi session. Pending work is retained.";
+    }
     const enabled = activeTab && state.enabled[String(activeTab.id)];
     elements.pageDetail.textContent = activeTab
       ? `${activeTab.title || activeTab.url || "Active tab"}${enabled ? " — annotation enabled for this document" : " — not enabled"}`
@@ -140,7 +179,7 @@
     elements.enable.textContent = enabled ? "Annotation enabled for this document" : "Enable annotation on this page";
     elements.enable.disabled = busy || !activeTab || Boolean(enabled);
     elements.cancel.disabled = busy || (state.annotationCount === 0 && Object.keys(state.drafts).length === 0);
-    elements.finish.disabled = busy || state.annotationCount === 0;
+    elements.finish.disabled = busy || state.annotationCount === 0 || mode === "unavailable";
     renderDrafts();
     renderAnnotations();
   }
@@ -153,6 +192,22 @@
       render();
     } catch (error) {
       setError(error.message);
+    }
+  }
+
+  async function refreshBridge() {
+    if (busy) return;
+    try {
+      const response = await send({ type: "CHECK_BRIDGE" });
+      if (state) {
+        state.bridge = response.bridge;
+        render();
+      }
+    } catch {
+      if (state) {
+        state.bridge = { status: "disconnected", detail: "Pi bridge is unavailable." };
+        render();
+      }
     }
   }
 
@@ -179,11 +234,11 @@
     if (window.confirm("Discard all pending annotations and screenshots?")) runAction({ type: "CANCEL_SESSION" });
   });
 
-  elements.finish.addEventListener("click", async () => {
+  async function finishStandalone() {
     setError("");
     setNotice("");
-    if (typeof window.showDirectoryPicker !== "function") {
-      setError("This Chrome context does not provide the File System Access directory picker.");
+    if (!standaloneSaveAvailable()) {
+      render();
       return;
     }
 
@@ -218,6 +273,30 @@
       setBusy(false);
       render();
     }
+  }
+
+  async function finishBridge() {
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const saved = (await send({ type: "FINISH_BRIDGE" })).result;
+      const warning = saved.warning ? ` Warning: ${saved.warning}` : "";
+      setNotice(`Saved ${saved.relative_path}.${warning}`);
+      await refresh();
+    } catch (error) {
+      setError(`${error.message} Pending annotations remain available for retry.`);
+      await refresh();
+    } finally {
+      setBusy(false);
+      render();
+    }
+  }
+
+  elements.finish.addEventListener("click", () => {
+    const mode = saveMode();
+    if (mode === "bridge") finishBridge();
+    else if (mode === "standalone") finishStandalone();
   });
 
   chrome.runtime.onMessage.addListener((message) => {
@@ -229,4 +308,6 @@
   });
 
   refresh();
+  refreshBridge();
+  window.setInterval(refreshBridge, 5000);
 })();

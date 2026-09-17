@@ -53,7 +53,7 @@
     return state.pages.reduce((total, page) => total + page.annotations.reduce((pageTotal, annotation) => pageTotal + annotation.screenshot.bytes, 0), 0);
   }
 
-  function publicState(state) {
+  function publicState(state, bridge) {
     return {
       createdAt: state.createdAt,
       revision: state.revision,
@@ -62,7 +62,7 @@
       drafts: clone(state.drafts),
       annotationCount: annotationCount(state),
       limits: LIMITS,
-      bridge: { status: "disconnected", detail: "Pi bridge is not included in this standalone slice." }
+      bridge: bridge || { status: "disconnected", detail: "Standalone save is available." }
     };
   }
 

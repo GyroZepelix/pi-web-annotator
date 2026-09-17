@@ -12,7 +12,7 @@ Durable current-state codebase knowledge. Read this file first when answering co
 
 ## Architecture
 
-- [Browser annotator](./browser-annotator.md): Standalone Chromium runtime boundary, schema-v1 bundle contract, save semantics, limits, and verification boundary.
+- [Browser annotator](./browser-annotator.md): Brave runtime, authenticated Pi bridge, optional capability-gated standalone save, schema-v1 bundles, generated icon, limits, and verification boundary.
 
 ## Modules
 
@@ -24,9 +24,10 @@ TBD after initial codebase ingest.
 
 ## Dream recall
 
-- [Standalone browser checkpoint](./dreams/2026-09-16-2023-gamemaster-checkpoint-260916-1901-pi-web-annotator-01-01.md): T01 implementation, review correction, verification, residual uncertainty, and T02 handoff.
-- [Pi web annotator checkpoint ledger](./dreams/by-spec/260916-1901-pi-web-annotator.md): Append-only Dream retention history for the work item.
+- [Episode catalog](./dreams/episodes.jsonl): Metadata-only routes to immutable Dream logs.
+- Per-spec checkpoint ledgers: `wiki/dreams/by-spec/<item-id>.md`.
+- Workflow retrospectives: `wiki/dreams/retrospectives/<item-id>.md`.
 
 ## Stale or needs review
 
-- Live Chromium verification for the standalone annotator remains pending; see [Browser annotator](./browser-annotator.md#verification-boundary).
+No known stale pages.

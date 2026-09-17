@@ -1,3 +1,3 @@
 # Memory
 
-- If working on the Chromium annotator, annotation bundle schema, standalone save, or Pi bridge integration, read ../browser-annotator.md.
+- If working on the Brave annotator, schema-v1 bundles, optional standalone save, or Pi bridge integration, read ../browser-annotator.md.

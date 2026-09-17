@@ -13,6 +13,7 @@
   const ANNOTATION_ID = /^annotation-\d{4,}$/;
   const PNG_PATH = /^screenshots\/(annotation-\d{4,})\.png$/;
   const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
+  const SAFE_ATTRIBUTE = /^(?:id|class|role|name|type|alt|title|data-testid|aria-[a-z0-9_.:-]+)$/i;
   const TARGET_KEYS = ["css", "xpath", "tag_name", "visible_text", "attributes", "outer_html", "bounding_rect", "scroll", "viewport", "device_pixel_ratio"];
 
   function ownKeys(value, expected, label) {
@@ -64,7 +65,7 @@
     const attributes = Object.entries(target.attributes.items);
     if (attributes.length > LIMITS.attributeCount) throw new Error(`${label}.attributes exceeds its limit`);
     for (const [name, bounded] of attributes) {
-      if (!/^[a-z][a-z0-9_.:-]*$/.test(name) || /^on/i.test(name) || ["value", "checked", "selected", "style", "srcdoc"].includes(name)) {
+      if (!SAFE_ATTRIBUTE.test(name) || /^on/i.test(name) || ["value", "checked", "selected", "style", "srcdoc", "nonce"].includes(name)) {
         throw new Error(`${label}.attributes contains an unsafe name`);
       }
       validateBoundedString(bounded, `${label}.attributes.${name}`, LIMITS.attributeValueCharacters);

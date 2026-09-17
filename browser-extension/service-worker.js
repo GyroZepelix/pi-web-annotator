@@ -1,11 +1,14 @@
-importScripts("lib/constants.js", "lib/annotations.js", "lib/bundle.js");
+importScripts("lib/constants.js", "lib/annotations.js", "lib/bundle.js", "lib/bridge.js");
 
 "use strict";
 
 const { STATE_KEY, LIMITS } = PiAnnotatorConstants;
 const State = PiAnnotatorState;
 const Bundle = PiAnnotatorBundle;
+const Bridge = PiAnnotatorBridge;
 let operationQueue = Promise.resolve();
+let bridgeProbe = null;
+let bridgeState = { status: "disconnected", detail: "No Pi bridge is connected.", token: null };
 
 function enqueue(operation) {
   const result = operationQueue.then(operation, operation);
@@ -35,8 +38,55 @@ function notifyStateChanged() {
   chrome.runtime.sendMessage({ type: "STATE_CHANGED" }).catch(() => {});
 }
 
+function publicBridgeState() {
+  return { status: bridgeState.status, detail: bridgeState.detail };
+}
+
+function setBridgeState(status, detail, token) {
+  bridgeState = { status, detail, token: token || null };
+  notifyStateChanged();
+  return publicBridgeState();
+}
+
+async function checkBridge() {
+  if (bridgeProbe) return bridgeProbe;
+  bridgeProbe = (async () => {
+    try {
+      const connected = await Bridge.handshake();
+      return setBridgeState("connected", "Pi is waiting for this project-aware save.", connected.token);
+    } catch {
+      return setBridgeState("disconnected", "No Pi bridge is connected.", null);
+    } finally {
+      bridgeProbe = null;
+    }
+  })();
+  return bridgeProbe;
+}
+
+async function finishWithBridge() {
+  if (bridgeState.status !== "connected" || !bridgeState.token) await checkBridge();
+  if (bridgeState.status !== "connected" || !bridgeState.token) {
+    throw new Error("Pi bridge is unavailable. Pending annotations were retained; run /annotate to reconnect or use standalone save when available.");
+  }
+  const finish = await finishData();
+  const completedAt = new Date();
+  const manifest = Bundle.createManifest(finish.session, Bundle.baseCaptureId(completedAt), completedAt.toISOString());
+  let result;
+  try {
+    result = await Bridge.complete(undefined, bridgeState.token, manifest, finish.images);
+  } catch (error) {
+    setBridgeState("disconnected", "Pi bridge was lost. Pending annotations were retained.", null);
+    throw new Error(`${error.message}. Pending annotations were retained; run /annotate to reconnect or use standalone save when available.`);
+  }
+  setBridgeState("disconnected", "The Pi bridge session finished.", null);
+  if (result.status !== "saved") throw new Error(`${result.message} Pending annotations were retained.`);
+  await clearSession(finish.revision);
+  return result;
+}
+
 function supportedPage(tab) {
-  if (!tab || !Number.isInteger(tab.id) || typeof tab.url !== "string") throw new Error("No active page is available.");
+  if (!tab || !Number.isInteger(tab.id)) throw new Error("No active page is available.");
+  if (typeof tab.url !== "string") throw new Error("Click the Pi Web Annotator toolbar action on this tab before enabling annotation.");
   let url;
   try { url = new URL(tab.url); } catch { throw new Error("This page URL is not supported."); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error("Only HTTP and HTTPS pages can be annotated.");
@@ -63,13 +113,13 @@ async function enableTab(tabId) {
   const next = State.clone(current);
   const key = String(tabId);
   const existing = next.enabled[key];
-  if (existing && existing.documentId === topFrame.documentId) return State.publicState(next);
+  if (existing && existing.documentId === topFrame.documentId) return State.publicState(next, publicBridgeState());
   if (existing) delete next.drafts[existing.pageId];
   const pageId = State.nextId(next, "page");
   next.pages.push({ id: pageId, url, title: String(tab.title || "").slice(0, 2000), annotations: [] });
   next.enabled[key] = { tabId, documentId: topFrame.documentId, pageId, url };
   await saveSession(next);
-  return State.publicState(next);
+  return State.publicState(next, publicBridgeState());
 }
 
 function enabledDocument(state, tabId, documentId) {
@@ -221,7 +271,13 @@ async function handleMessage(message, sender) {
   switch (message.type) {
     case "GET_STATE":
       assertMessageShape(message, []);
-      return { ok: true, state: State.publicState(await loadSession()) };
+      return { ok: true, state: State.publicState(await loadSession(), publicBridgeState()) };
+    case "CHECK_BRIDGE":
+      assertMessageShape(message, []);
+      return { ok: true, bridge: await checkBridge() };
+    case "FINISH_BRIDGE":
+      assertMessageShape(message, []);
+      return { ok: true, result: await finishWithBridge() };
     case "ENABLE_TAB":
       assertMessageShape(message, ["tabId"]);
       return { ok: true, state: await enableTab(message.tabId) };
@@ -262,11 +318,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-});
-chrome.runtime.onStartup.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+chrome.action.onClicked.addListener((tab) => {
+  if (!tab || !Number.isInteger(tab.windowId)) return;
+  chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  notifyStateChanged();
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") enqueue(() => removeEnabledTab(tabId)).catch(() => {});

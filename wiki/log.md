@@ -42,3 +42,11 @@ Use this shape for new entries:
 - Wiki pages changed: `wiki/dreams/retrospectives/260916-1901-pi-web-annotator.md`, `wiki/observations.md`, and `wiki/log.md`.
 - Verification: retrospective helper created the lifecycle phase; memory safety, target links, phase uniqueness, scope boundaries, and `git diff --check` passed.
 - Notes: retained one tentative browser-extension planning observation; ordinary episodes, catalog, checkpoint ledger, dynamic guidance, pointers, index, and state remain unchanged.
+
+## [2026-09-22] ingest | improved annotation interaction workflow
+
+- Trigger: direct T01 implementation and verification established the current Pause/Resume, armed re-hover capture, stable accepted editing, and exact-live Highlight behavior.
+- Inputs: `browser-extension/`, `tests/browser/`, `README.md`, and work item `260922-1604-improve-annotation-workflow` with automated and live Brave acceptance evidence.
+- Wiki pages changed: `wiki/browser-annotator.md`, `wiki/log.md`, and `wiki/state.md`.
+- Verification: source and canonical plan were reconciled; `node --test` passed 75/75; focused browser tests passed 25/25; JavaScript syntax, package dry-run, Markdown, spec, and diff checks passed; live Brave 153.1.95.102 on macOS 26.4 exercised the complete interaction workflow.
+- Notes: exact live-target identity remains document-runtime-only; Highlight deliberately does not reattach from selectors after navigation or DOM detachment.

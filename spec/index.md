@@ -20,6 +20,7 @@ Repository-local planning and execution artifacts.
 | --- | --- | --- | --- |
 | [Pi web annotator](./archive/260916-1901-pi-web-annotator/plan.md) | work-item | completed | 2026-09-17 |
 | [Set canonical repository URL in documentation](./archive/260917-1512-set-canonical-repository-url-in-documentation/plan.md) | work-item | completed | 2026-09-17 |
+| [Improve annotation workflow](./archive/260922-1604-improve-annotation-workflow/plan.md) | work-item | completed | 2026-09-22 |
 <!-- spec-items:archive:end -->
 
 ## Templates

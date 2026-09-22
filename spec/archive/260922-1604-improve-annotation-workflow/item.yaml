@@ -1,0 +1,13 @@
+schema_version: 2
+id: 260922-1604-improve-annotation-workflow
+title: Improve annotation workflow
+kind: work-item
+work_type: other
+parent: null
+route: grill-to-spec
+status: completed
+superseded_by: null
+created_at: '2026-09-22T16:04:51+02:00'
+updated_at: '2026-09-22T18:59:37+02:00'
+external_refs: []
+wiki_refs: []

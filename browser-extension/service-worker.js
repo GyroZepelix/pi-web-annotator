@@ -117,7 +117,7 @@ async function enableTab(tabId) {
   if (existing) delete next.drafts[existing.pageId];
   const pageId = State.nextId(next, "page");
   next.pages.push({ id: pageId, url, title: String(tab.title || "").slice(0, 2000), annotations: [] });
-  next.enabled[key] = { tabId, documentId: topFrame.documentId, pageId, url };
+  next.enabled[key] = { tabId, documentId: topFrame.documentId, pageId, url, mode: "active" };
   await saveSession(next);
   return State.publicState(next, publicBridgeState());
 }
@@ -128,12 +128,80 @@ function enabledDocument(state, tabId, documentId) {
   return enabled;
 }
 
+function assertId(value, pattern, label) {
+  if (typeof value !== "string" || !pattern.test(value)) throw new Error(`${label} is invalid.`);
+}
+
+function assertPageId(value) {
+  assertId(value, /^page-[0-9]{4,}$/, "Page identity");
+}
+
+function assertSelectionId(value) {
+  assertId(value, /^[0-9a-f-]{20,}$/i, "Selection identity");
+}
+
+function assertArmId(value) {
+  assertId(value, /^[0-9a-f-]{20,}$/i, "Armed capture identity");
+}
+
+function assertAnnotationId(value) {
+  assertId(value, /^annotation-[0-9]{4,}$/, "Annotation identity");
+}
+
+function documentMode(enabled) {
+  return enabled.mode === "paused" ? "paused" : "active";
+}
+
+function requireActiveDocument(state, tabId, documentId) {
+  const enabled = enabledDocument(state, tabId, documentId);
+  if (documentMode(enabled) !== "active") throw new Error("Resume annotation before selecting or capturing a target.");
+  return enabled;
+}
+
+async function setDocumentMode(tabId, nextMode) {
+  if (!Number.isInteger(tabId)) throw new Error("An active tab is required.");
+  const current = await loadSession();
+  const enabled = current.enabled[String(tabId)];
+  if (!enabled) throw new Error("Annotation is not enabled for this document. Enable it again after navigation.");
+  const currentMode = documentMode(enabled);
+  if (currentMode === nextMode) return State.publicState(current, publicBridgeState());
+  const messageType = nextMode === "paused" ? "PAUSE_ANNOTATION" : "RESUME_ANNOTATION";
+  const rollbackType = nextMode === "paused" ? "RESUME_ANNOTATION" : "PAUSE_ANNOTATION";
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(enabled.tabId, { type: messageType }, { documentId: enabled.documentId });
+  } catch (error) {
+    throw new Error(`The page runtime could not ${nextMode === "paused" ? "pause" : "resume"}: ${error.message}`);
+  }
+  if (!response || !response.ok) throw new Error(response && response.error ? response.error : `The page runtime could not ${nextMode === "paused" ? "pause" : "resume"}.`);
+
+  const next = State.clone(current);
+  next.enabled[String(tabId)].mode = nextMode;
+  const draft = next.drafts[enabled.pageId];
+  const priorArmed = draft && draft.armed ? State.clone(draft.armed) : null;
+  if (draft && nextMode === "paused") delete draft.armed;
+  try {
+    await saveSession(next);
+  } catch (error) {
+    await chrome.tabs.sendMessage(enabled.tabId, { type: rollbackType }, { documentId: enabled.documentId }).catch(() => {});
+    if (nextMode === "paused" && draft && priorArmed) {
+      await chrome.tabs.sendMessage(
+        enabled.tabId,
+        { type: "ARM_CAPTURE", armId: priorArmed.armId, selectionId: draft.selectionId },
+        { documentId: enabled.documentId }
+      ).catch(() => {});
+    }
+    throw error;
+  }
+  return State.publicState(next, publicBridgeState());
+}
+
 async function storeSelection(message, sender) {
   if (!sender.tab || !Number.isInteger(sender.tab.id) || typeof sender.documentId !== "string") throw new Error("Selection sender is invalid.");
-  if (typeof message.selectionId !== "string" || !/^[0-9a-f-]{20,}$/i.test(message.selectionId)) throw new Error("Selection identity is invalid.");
+  assertSelectionId(message.selectionId);
   Bundle.validateTarget(message.target, "target");
   const current = await loadSession();
-  const enabled = enabledDocument(current, sender.tab.id, sender.documentId);
+  const enabled = requireActiveDocument(current, sender.tab.id, sender.documentId);
   const next = State.clone(current);
   next.drafts[enabled.pageId] = {
     pageId: enabled.pageId,
@@ -147,58 +215,155 @@ async function storeSelection(message, sender) {
   return { ok: true };
 }
 
-async function acceptComment(message) {
+async function recordDraftFailure(pageId, selectionId, error, invalid = false) {
+  try {
+    const current = await loadSession();
+    const draft = current.drafts[pageId];
+    if (!draft || draft.selectionId !== selectionId) return;
+    const next = State.clone(current);
+    delete next.drafts[pageId].armed;
+    next.drafts[pageId].captureError = String(error);
+    if (invalid) next.drafts[pageId].targetInvalid = true;
+    await saveSession(next);
+  } catch {
+    // Preserve the original failure when even the recovery-state write is unavailable.
+  }
+}
+
+async function armCapture(message) {
+  assertPageId(message.pageId);
   const comment = State.normalizeComment(message.comment);
   const current = await loadSession();
   const draft = current.drafts[message.pageId];
   if (!draft) throw new Error("The pending selection is no longer available.");
+  if (draft.targetInvalid) throw new Error("The selected element is no longer available. Select it again.");
   if (State.annotationCount(current) >= LIMITS.annotations) throw new Error(`The session limit is ${LIMITS.annotations} annotations.`);
-  enabledDocument(current, draft.tabId, draft.documentId);
+  requireActiveDocument(current, draft.tabId, draft.documentId);
   const tab = await chrome.tabs.get(draft.tabId);
-  if (!tab.active) throw new Error("Activate the selected page before capturing its screenshot.");
+  if (!tab.active) throw new Error("Activate the selected page before arming its screenshot.");
   supportedPage(tab);
 
-  let prepared = false;
-  let dataUrl;
+  const armId = crypto.randomUUID();
+  const next = State.clone(current);
+  next.drafts[message.pageId].comment = comment;
+  next.drafts[message.pageId].armed = { armId, selectionId: draft.selectionId };
+  delete next.drafts[message.pageId].captureError;
+  await saveSession(next);
+
   try {
     const response = await chrome.tabs.sendMessage(
       draft.tabId,
-      { type: "PREPARE_CAPTURE", selectionId: draft.selectionId },
+      { type: "ARM_CAPTURE", armId, selectionId: draft.selectionId },
       { documentId: draft.documentId }
     );
-    if (!response || !response.ok) throw new Error(response && response.error ? response.error : "The target could not be outlined.");
-    prepared = true;
-    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    if (!response || !response.ok) throw new Error(response && response.error ? response.error : "The target could not be armed.");
   } catch (error) {
-    throw new Error(`Screenshot capture failed: ${error.message}`);
-  } finally {
-    if (prepared) {
-      await chrome.tabs.sendMessage(draft.tabId, { type: "CLEAR_CAPTURE" }, { documentId: draft.documentId }).catch(() => {});
-    }
+    const invalid = /no longer available/i.test(error.message);
+    await recordDraftFailure(draft.pageId, draft.selectionId, error.message, invalid);
+    throw error;
+  }
+  return { ok: true, armId };
+}
+
+async function cancelArmedCapture(message) {
+  assertPageId(message.pageId);
+  assertSelectionId(message.selectionId);
+  const current = await loadSession();
+  const draft = current.drafts[message.pageId];
+  if (!draft || draft.selectionId !== message.selectionId) throw new Error("The pending selection is no longer available.");
+  const armed = draft.armed;
+  if (!armed) return { ok: true };
+  const next = State.clone(current);
+  delete next.drafts[message.pageId].armed;
+  delete next.drafts[message.pageId].captureError;
+  await saveSession(next);
+  await chrome.tabs.sendMessage(
+    draft.tabId,
+    { type: "CANCEL_ARMED_CAPTURE", armId: armed.armId, selectionId: draft.selectionId },
+    { documentId: draft.documentId }
+  ).catch(() => {});
+  return { ok: true };
+}
+
+async function captureFailed(message, sender) {
+  assertArmId(message.armId);
+  assertSelectionId(message.selectionId);
+  if (typeof message.error !== "string" || !message.error || message.error.length > 1000) throw new Error("Capture error is invalid.");
+  if (!sender.tab || !Number.isInteger(sender.tab.id) || typeof sender.documentId !== "string") throw new Error("Capture sender is invalid.");
+  const current = await loadSession();
+  const enabled = enabledDocument(current, sender.tab.id, sender.documentId);
+  const draft = current.drafts[enabled.pageId];
+  if (!draft || !draft.armed || draft.armed.armId !== message.armId || draft.selectionId !== message.selectionId) {
+    throw new Error("The armed capture identity is stale.");
+  }
+  await recordDraftFailure(enabled.pageId, draft.selectionId, String(message.error || "Capture failed."), true);
+  return { ok: true };
+}
+
+async function captureReady(message, sender) {
+  assertArmId(message.armId);
+  assertSelectionId(message.selectionId);
+  if (!sender.tab || !Number.isInteger(sender.tab.id) || typeof sender.documentId !== "string") throw new Error("Capture sender is invalid.");
+  const current = await loadSession();
+  const enabled = requireActiveDocument(current, sender.tab.id, sender.documentId);
+  const draft = current.drafts[enabled.pageId];
+  if (!draft || !draft.armed || draft.armed.armId !== message.armId || draft.selectionId !== message.selectionId) {
+    throw new Error("The armed capture identity is stale.");
   }
 
-  const bytes = Bundle.bytesFromImage(dataUrl, "screenshot");
-  if (bytes.length > LIMITS.imageBytes) throw new Error(`Screenshot exceeds the ${LIMITS.imageBytes}-byte image limit.`);
-  if (State.totalImageBytes(current) + bytes.length > LIMITS.totalImageBytes) throw new Error("Screenshots exceed the session image limit.");
+  const disarmed = State.clone(current);
+  delete disarmed.drafts[enabled.pageId].armed;
+  delete disarmed.drafts[enabled.pageId].captureError;
+  await saveSession(disarmed);
 
-  const next = State.clone(current);
-  const page = next.pages.find((candidate) => candidate.id === draft.pageId);
-  if (!page) throw new Error("The selected page record is unavailable.");
-  const annotationId = State.nextId(next, "annotation");
-  const timestamp = new Date().toISOString();
-  const path = `screenshots/${annotationId}.png`;
-  page.annotations.push({
-    id: annotationId,
-    comment,
-    created_at: timestamp,
-    updated_at: timestamp,
-    target: draft.target,
-    screenshot: { path, media_type: "image/png", bytes: bytes.length }
-  });
-  next.screenshots[path] = dataUrl;
-  delete next.drafts[draft.pageId];
-  await saveSession(next);
-  return { ok: true, annotationId };
+  let dataUrl;
+  try {
+    const tab = await chrome.tabs.get(draft.tabId);
+    if (!tab.active) throw new Error("Activate the selected page before capturing its screenshot.");
+    supportedPage(tab);
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    const bytes = Bundle.bytesFromImage(dataUrl, "screenshot");
+    if (bytes.length > LIMITS.imageBytes) throw new Error(`Screenshot exceeds the ${LIMITS.imageBytes}-byte image limit.`);
+
+    const latest = await loadSession();
+    const latestDraft = latest.drafts[enabled.pageId];
+    if (!latestDraft || latestDraft.selectionId !== draft.selectionId || latestDraft.documentId !== draft.documentId) {
+      throw new Error("The selected target changed before capture completed. Select it again.");
+    }
+    requireActiveDocument(latest, draft.tabId, draft.documentId);
+    if (State.annotationCount(latest) >= LIMITS.annotations) throw new Error(`The session limit is ${LIMITS.annotations} annotations.`);
+    if (State.totalImageBytes(latest) + bytes.length > LIMITS.totalImageBytes) throw new Error("Screenshots exceed the session image limit.");
+
+    const next = State.clone(latest);
+    const page = next.pages.find((candidate) => candidate.id === draft.pageId);
+    if (!page) throw new Error("The selected page record is unavailable.");
+    const annotationId = State.nextId(next, "annotation");
+    const timestamp = new Date().toISOString();
+    const path = `screenshots/${annotationId}.png`;
+    page.annotations.push({
+      id: annotationId,
+      comment: latestDraft.comment,
+      created_at: timestamp,
+      updated_at: timestamp,
+      target: latestDraft.target,
+      screenshot: { path, media_type: "image/png", bytes: bytes.length }
+    });
+    next.screenshots[path] = dataUrl;
+    delete next.drafts[draft.pageId];
+    await saveSession(next);
+    await chrome.tabs.sendMessage(
+      draft.tabId,
+      { type: "COMPLETE_CAPTURE", selectionId: draft.selectionId, annotationId },
+      { documentId: draft.documentId }
+    ).catch(() => {});
+    return { ok: true, annotationId };
+  } catch (error) {
+    const invalid = /changed before capture completed|no longer available/i.test(error.message);
+    await recordDraftFailure(draft.pageId, draft.selectionId, `Screenshot capture failed: ${error.message}`, invalid);
+    throw new Error(`Screenshot capture failed: ${error.message}`);
+  } finally {
+    await chrome.tabs.sendMessage(draft.tabId, { type: "CLEAR_CAPTURE" }, { documentId: draft.documentId }).catch(() => {});
+  }
 }
 
 function findAnnotation(state, annotationId) {
@@ -210,6 +375,7 @@ function findAnnotation(state, annotationId) {
 }
 
 async function editComment(message) {
+  assertAnnotationId(message.annotationId);
   const comment = State.normalizeComment(message.comment);
   const next = State.clone(await loadSession());
   const { annotation } = findAnnotation(next, message.annotationId);
@@ -220,11 +386,48 @@ async function editComment(message) {
 }
 
 async function deleteAnnotation(message) {
+  assertAnnotationId(message.annotationId);
   const next = State.clone(await loadSession());
   const { page, index, annotation } = findAnnotation(next, message.annotationId);
   page.annotations.splice(index, 1);
   delete next.screenshots[annotation.screenshot.path];
   await saveSession(next);
+  const enabled = Object.values(next.enabled).find((entry) => entry.pageId === page.id);
+  if (enabled) {
+    await chrome.tabs.sendMessage(
+      enabled.tabId,
+      { type: "UNBIND_ANNOTATION", annotationId: message.annotationId },
+      { documentId: enabled.documentId }
+    ).catch(() => {});
+  }
+  return { ok: true };
+}
+
+async function highlightAnnotation(message) {
+  assertAnnotationId(message.annotationId);
+  const state = await loadSession();
+  const { page } = findAnnotation(state, message.annotationId);
+  const enabled = Object.values(state.enabled).find((entry) => entry.pageId === page.id);
+  if (!enabled) throw new Error("Highlight is unavailable because the source document was replaced or closed.");
+  const tab = await chrome.tabs.get(enabled.tabId);
+  const [currentActiveTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab.active || !currentActiveTab || currentActiveTab.id !== enabled.tabId) {
+    throw new Error("Switch to the annotation's source tab before using Highlight.");
+  }
+  supportedPage(tab);
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(
+      enabled.tabId,
+      { type: "HIGHLIGHT_TARGET", annotationId: message.annotationId },
+      { documentId: enabled.documentId }
+    );
+  } catch {
+    throw new Error("Highlight is unavailable because the source page runtime is no longer available.");
+  }
+  if (!response || !response.ok) {
+    throw new Error(response && response.error ? response.error : "Highlight is unavailable because the exact live target is gone.");
+  }
   return { ok: true };
 }
 
@@ -281,21 +484,39 @@ async function handleMessage(message, sender) {
     case "ENABLE_TAB":
       assertMessageShape(message, ["tabId"]);
       return { ok: true, state: await enableTab(message.tabId) };
+    case "PAUSE_DOCUMENT":
+      assertMessageShape(message, ["tabId"]);
+      return { ok: true, state: await setDocumentMode(message.tabId, "paused") };
+    case "RESUME_DOCUMENT":
+      assertMessageShape(message, ["tabId"]);
+      return { ok: true, state: await setDocumentMode(message.tabId, "active") };
     case "TARGET_SELECTED":
       assertMessageShape(message, ["selectionId", "target"]);
       return storeSelection(message, sender);
     case "TARGET_SELECTION_FAILED":
       assertMessageShape(message, ["error"]);
       throw new Error(String(message.error || "Target selection failed."));
-    case "ACCEPT_COMMENT":
+    case "ARM_CAPTURE":
       assertMessageShape(message, ["comment", "pageId"]);
-      return acceptComment(message);
+      return armCapture(message);
+    case "CANCEL_ARMED_CAPTURE":
+      assertMessageShape(message, ["pageId", "selectionId"]);
+      return cancelArmedCapture(message);
+    case "CAPTURE_READY":
+      assertMessageShape(message, ["armId", "selectionId"]);
+      return captureReady(message, sender);
+    case "CAPTURE_FAILED":
+      assertMessageShape(message, ["armId", "error", "selectionId"]);
+      return captureFailed(message, sender);
     case "EDIT_COMMENT":
       assertMessageShape(message, ["annotationId", "comment"]);
       return editComment(message);
     case "DELETE_ANNOTATION":
       assertMessageShape(message, ["annotationId"]);
       return deleteAnnotation(message);
+    case "HIGHLIGHT_ANNOTATION":
+      assertMessageShape(message, ["annotationId"]);
+      return highlightAnnotation(message);
     case "CANCEL_SESSION":
       assertMessageShape(message, []);
       return clearSession();

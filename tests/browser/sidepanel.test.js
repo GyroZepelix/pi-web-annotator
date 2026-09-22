@@ -28,6 +28,9 @@ class FakeElement {
     this.disabled = false;
     this.required = false;
     this.maxLength = -1;
+    this.readOnly = false;
+    this.selectionStart = 0;
+    this.selectionEnd = 0;
     this.replaceCount = 0;
   }
 
@@ -61,6 +64,11 @@ class FakeElement {
 
   focus() {
     this.ownerDocument.activeElement = this;
+  }
+
+  async dispatch(type) {
+    const event = { preventDefault() {}, target: this };
+    for (const listener of this.listeners.get(type) || []) await listener(event);
   }
 }
 
@@ -117,12 +125,14 @@ function createHarness(options = {}) {
   const tabsActivated = new ChromeEvent();
   const tabsUpdated = new ChromeEvent();
   const intervals = [];
+  const sent = [];
   let currentState = options.state || session();
   let currentBridge = options.bridge || { status: "disconnected", detail: "No Pi bridge is connected." };
   const chrome = {
     runtime: {
       onMessage: runtimeMessage,
       async sendMessage(message) {
+        sent.push(structuredClone(message));
         if (message.type === "GET_STATE") {
           const publicState = structuredClone(currentState);
           publicState.bridge = structuredClone(currentBridge);
@@ -131,6 +141,34 @@ function createHarness(options = {}) {
         if (message.type === "CHECK_BRIDGE") {
           return { ok: true, bridge: structuredClone(currentBridge) };
         }
+        if (message.type === "PAUSE_DOCUMENT") {
+          currentState.enabled[message.tabId].mode = "paused";
+          const draft = currentState.drafts[currentState.enabled[message.tabId].pageId];
+          if (draft) delete draft.armed;
+          return { ok: true };
+        }
+        if (message.type === "RESUME_DOCUMENT") {
+          currentState.enabled[message.tabId].mode = "active";
+          return { ok: true };
+        }
+        if (message.type === "ARM_CAPTURE") {
+          const draft = currentState.drafts[message.pageId];
+          draft.comment = message.comment.trim();
+          draft.armed = { armId: "arm-A", selectionId: draft.selectionId };
+          return { ok: true };
+        }
+        if (message.type === "CANCEL_ARMED_CAPTURE") {
+          delete currentState.drafts[message.pageId].armed;
+          return { ok: true };
+        }
+        if (message.type === "EDIT_COMMENT") {
+          for (const page of currentState.pages) {
+            const annotation = page.annotations.find((candidate) => candidate.id === message.annotationId);
+            if (annotation) annotation.comment = message.comment.trim();
+          }
+          return { ok: true };
+        }
+        if (message.type === "HIGHLIGHT_ANNOTATION") return { ok: true };
         throw new Error(`Unexpected message: ${message.type}`);
       }
     },
@@ -162,6 +200,7 @@ function createHarness(options = {}) {
     document,
     intervals,
     runtimeMessage,
+    sent,
     getState() { return structuredClone(currentState); },
     setBridge(next) { currentBridge = next; },
     setState(next) { currentState = next; }
@@ -172,6 +211,11 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+test("author styles preserve the hidden attribute for inactive editor controls", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "..", "browser-extension", "sidepanel.css"), "utf8");
+  assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/);
+});
 
 test("comment typing survives bridge polling and unrelated state refreshes but resets for a replaced target", async () => {
   const harness = createHarness();
@@ -261,4 +305,86 @@ test("bridge loss and authenticated reconnection recompute Finish without mutati
   assert.equal(textarea.value, "Draft survives capability changes");
   assert.equal(harness.document.activeElement, textarea);
   assert.deepEqual(harness.getState(), initial);
+});
+
+test("Pause and Resume preserve the same draft control and armed capture can be cancelled", async () => {
+  const harness = createHarness();
+  await flush();
+  const control = harness.document.querySelector("#enable-button");
+  const drafts = harness.document.querySelector("#drafts");
+  const card = drafts.children[0];
+  const textarea = card.children[1];
+  textarea.value = "Unsaved local wording";
+  textarea.focus();
+
+  assert.equal(control.textContent, "Pause annotation");
+  await control.dispatch("click");
+  await flush();
+  assert.equal(harness.getState().enabled[7].mode, "paused");
+  assert.equal(control.textContent, "Resume annotation");
+  assert.equal(drafts.children[0].children[1], textarea);
+  assert.equal(textarea.value, "Unsaved local wording");
+  assert.equal(harness.document.activeElement, textarea);
+
+  await control.dispatch("click");
+  await flush();
+  assert.equal(harness.getState().enabled[7].mode, "active");
+  assert.equal(control.textContent, "Pause annotation");
+  await card.dispatch("submit");
+  await flush();
+  assert.equal(harness.getState().drafts["page-0001"].comment, "Unsaved local wording");
+  assert.ok(harness.getState().drafts["page-0001"].armed);
+  assert.equal(textarea.readOnly, true);
+  assert.match(card.children[3].children[0].textContent, /Armed/);
+
+  await card.children[3].children[1].dispatch("click");
+  await flush();
+  assert.equal(harness.getState().drafts["page-0001"].armed, undefined);
+  assert.equal(textarea.value, "Unsaved local wording");
+  assert.equal(textarea.readOnly, false);
+});
+
+test("accepted editor identity, text, focus, and caret survive polls and unrelated refreshes", async () => {
+  const harness = createHarness({ state: pendingSession() });
+  await flush();
+  const annotations = harness.document.querySelector("#annotations");
+  const card = annotations.children[0];
+  const displayActions = card.children[2];
+  const editor = card.children[3];
+
+  await displayActions.children[1].dispatch("click");
+  editor.value = "Unsaved accepted-comment edit";
+  editor.selectionStart = 7;
+  editor.selectionEnd = 19;
+  editor.focus();
+  const replacementsBefore = annotations.replaceCount;
+
+  await harness.intervals[0]();
+  await harness.intervals[0]();
+  harness.runtimeMessage.emit({ type: "STATE_CHANGED" });
+  await flush();
+  assert.equal(annotations.children[0], card);
+  assert.equal(card.children[3], editor);
+  assert.equal(editor.value, "Unsaved accepted-comment edit");
+  assert.equal(editor.selectionStart, 7);
+  assert.equal(editor.selectionEnd, 19);
+  assert.equal(harness.document.activeElement, editor);
+  assert.equal(annotations.replaceCount, replacementsBefore);
+
+  await card.children[4].children[1].dispatch("click");
+  assert.equal(editor.value, "Retain this annotation");
+  assert.equal(editor.hidden, true);
+
+  await displayActions.children[1].dispatch("click");
+  editor.value = "Saved accepted-comment edit";
+  await card.children[4].children[0].dispatch("click");
+  await flush();
+  assert.equal(harness.getState().pages[0].annotations[0].comment, "Saved accepted-comment edit");
+  assert.equal(editor.hidden, true);
+  assert.equal(card.children[1].textContent, "Saved accepted-comment edit");
+  assert.equal(harness.sent.filter((message) => message.type === "EDIT_COMMENT").length, 1);
+
+  await displayActions.children[0].dispatch("click");
+  await flush();
+  assert.equal(harness.sent.filter((message) => message.type === "HIGHLIGHT_ANNOTATION").length, 1);
 });

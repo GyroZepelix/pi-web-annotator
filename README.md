@@ -59,11 +59,12 @@ The manifest requests exactly `activeTab`, `scripting`, `sidePanel`, and `storag
 1. Visit an HTTP or HTTPS page and click the toolbar action to grant `activeTab` for that tab and open (or retain) the global side panel.
 2. Click **Enable annotation on this page**. The toolbar click never injects automatically. Every new tab needs its own toolbar click and Enable. Every navigation invalidates injected mode and needs Enable for the new document; a navigation that revokes `activeTab`, such as a cross-origin navigation, also needs a fresh toolbar click first.
 3. Hover a candidate and click it. The temporary candidate outline is removed and bounded target evidence appears in the side panel.
-4. Enter a non-empty plain-text comment and choose **Accept comment and capture**. Keep that page active. The selected target alone receives a temporary red outline while Brave captures the visible viewport.
-5. Edit comments without recapturing, delete annotations and their pending screenshots, or use the confirmed **Cancel session** action.
-6. Choose **Finish and save...** using one of the workflows below.
+4. Enter a non-empty plain-text comment and choose **Arm capture on re-hover**. Return to the page and keep the pointer over the original target (or one of its descendants) for 750 milliseconds. Candidate selection remains suspended while armed; the selected target receives a red capture outline only after the continuous hover delay, then Brave captures the visible viewport with page-owned hover UI still present. Use **Cancel armed capture** to disarm without losing the comment.
+5. Choose **Pause annotation** whenever you need normal page clicks or links. Pause removes extension candidate styling and interception but retains the same-document selection and textarea text; **Resume annotation** restores selection. Navigation still discards only an unaccepted target and requires explicit Enable on the replacement document.
+6. Every accepted card can **Highlight** its exact live source element, **Edit** without recapturing, or **Delete**. Highlight works while paused, centers and strongly outlines the element for two seconds, and never guesses from stored selectors. Switch to a background source tab first; a replaced document or detached element cannot be highlighted.
+7. Choose **Finish and save...** using one of the workflows below.
 
-Pending state is held in `chrome.storage.session`, so service-worker suspension does not lose the current browser session. Capture, transfer, prompt, picker, validation, and write failures retain pending state for retry.
+Pending state is held in `chrome.storage.session`, so service-worker suspension does not lose the current browser session. Per-document active/paused mode and armed comments survive worker suspension. Capture, transfer, prompt, picker, validation, and write failures create no partial annotation and retain retryable input when the exact target remains live.
 
 ## Save through `/annotate`
 
@@ -176,7 +177,10 @@ When the exact capture is unknown, ask Pi to inspect `.pi-annotations/` in desce
 - **Pi declined or failed the destination:** correct the project path or permissions, rerun `/annotate`, and retry; browser state remains pending.
 - **Page cannot be enabled:** Brave restricts internal pages such as `brave://`, the Web Store, PDF/browser UI, and some protected documents. Use an ordinary HTTP or HTTPS page. If the page was opened in a new tab or access was revoked by navigation, click the toolbar action before Enable.
 - **Selection disappeared after navigation:** this is expected. Enable the new document again; after access-revoking navigation, click the toolbar action first. Accepted annotations from the prior page remain pending.
-- **Screenshot capture failed:** activate the selected page, keep it visible, and retry accepting the comment.
+- **Armed capture does not start:** resume annotation, keep the source tab active, then move the pointer away and continuously re-hover the original target for at least 750 milliseconds. Cancel and re-arm if needed.
+- **Screenshot capture failed:** keep the selected page active and visible, then re-arm the retained comment. If the panel reports that the target is gone, select it again.
+- **Highlight is unavailable:** switch to the annotation's source tab. Highlight cannot recover an element after navigation, content-script loss, or DOM detachment and deliberately does not use saved CSS/XPath locators.
+- **An edit appears stuck open:** bridge polls should not replace an editor. Choose **Save edit** to persist the text or **Keep original** to discard only that edit draft; reload the unpacked extension if its source changed during development.
 - **Picker was cancelled or permission denied:** click Finish again; annotations remain pending.
 - **A partial standalone directory exists:** it is invalid without a valid `annotations.json`; retry creates a suffixed directory.
 
@@ -204,14 +208,18 @@ Run this checklist in Brave 1.95.101 or newer on macOS. Record the exact Brave v
 - [ ] On an HTTPS page, the toolbar action opens one global side panel; annotation starts only after **Enable**.
 - [ ] With the global panel already open, a toolbar click on another ordinary tab authorizes that tab but still does not inject until **Enable**.
 - [ ] On HTTP localhost, enable and annotate without permanent page changes.
-- [ ] Hover shows only a temporary candidate outline; acceptance captures a visible-viewport PNG with only the target outlined and no side-panel controls.
+- [ ] Hover shows only a temporary candidate outline. Arming requires a non-empty comment; a 750-millisecond continuous re-hover captures one visible-viewport PNG with the target outline, the page's delayed hover hint, and no side-panel controls. On a target inside an overflow-clipped region, the red capture border remains visible around only its visible portion.
+- [ ] Cancelling or forcing capture/storage failure creates no annotation and preserves retryable text while the target remains live; repeated ready events do not duplicate an annotation.
 - [ ] A scrolled target records scroll, viewport, rectangle, and device-pixel-ratio evidence.
 - [ ] A second tab cannot enable before its own toolbar click, then requires its own Enable; both pages' accepted annotations remain ordered.
 - [ ] Same-origin navigation revokes injected mode and requires Enable again while preserving accepted annotations.
 - [ ] Cross-origin navigation revokes injected mode and access, fails Enable until a fresh toolbar click, and preserves accepted annotations.
 - [ ] A restricted page reports a clear enable error without deleting pending state.
+- [ ] Pause removes outlines and click interception so real controls and links work; Resume preserves the same-document selection and local textarea text. Navigation requires explicit Enable and removes only the stale unaccepted target.
 - [ ] Empty comments are refused; editing does not recapture; deleting removes the PNG; Cancel asks for confirmation.
-- [ ] Side-panel reload and service-worker suspension retain pending state in the same browser session.
+- [ ] An accepted-comment editor keeps its text, focus, caret, and DOM control identity for longer than two bridge polls and through unrelated state refreshes; Save edit persists and Keep original discards only that edit draft.
+- [ ] Multiple accepted annotations Highlight their own exact live targets. Highlight works while paused, centers the target, restores original inline outline styles after two seconds, guides background-tab users, and fails safely for replaced or detached targets.
+- [ ] Side-panel reload and service-worker suspension retain pending state, including active/paused mode and armed comments, in the same browser session.
 - [ ] Text, focus, and caret in a selected-target comment survive bridge polling and unrelated state refreshes; accepting, cancelling, removing, or replacing the target clears only the intended draft.
 
 ### Bridge and intake

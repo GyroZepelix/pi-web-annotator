@@ -20,7 +20,8 @@ class ChromeEvent {
 function createHarness(shared = {}) {
   shared.storage ||= {};
   shared.calls ||= [];
-  shared.failNextSet ||= false;
+  shared.setCalls ||= 0;
+  shared.failSetOnCall ||= null;
   shared.authorizedTabIds ||= new Set();
   shared.tabs ||= {
     7: { id: 7, windowId: 2, active: true, url: "https://example.com/page", title: "Example" },
@@ -44,7 +45,11 @@ function createHarness(shared = {}) {
       session: {
         async get(key) { return Object.prototype.hasOwnProperty.call(shared.storage, key) ? { [key]: clone(shared.storage[key]) } : {}; },
         async set(values) {
-          if (shared.failNextSet) { shared.failNextSet = false; throw new Error("mock session quota failure"); }
+          shared.setCalls += 1;
+          if (shared.failSetOnCall === shared.setCalls) {
+            shared.failSetOnCall = null;
+            throw new Error("mock session quota failure");
+          }
           Object.assign(shared.storage, clone(values));
         },
         async remove(key) { delete shared.storage[key]; }
@@ -75,13 +80,18 @@ function createHarness(shared = {}) {
       onUpdated: tabsUpdated,
       onRemoved: tabsRemoved,
       async get(tabId) { return visibleTab(tabId); },
+      async query() {
+        const tab = Object.values(shared.tabs).find((candidate) => candidate.active && candidate.windowId === (shared.currentWindowId || 2));
+        return tab ? [visibleTab(tab.id)] : [];
+      },
       async sendMessage(tabId, message, options) {
         shared.calls.push(["tabs.sendMessage", tabId, message, options]);
-        if (message.type === "PREPARE_CAPTURE") return { ok: true };
+        if (shared.tabMessage) return shared.tabMessage(tabId, message, options);
         return { ok: true };
       },
       async captureVisibleTab(windowId, options) {
         shared.calls.push(["captureVisibleTab", windowId, options]);
+        if (shared.captureError) throw new Error(shared.captureError);
         return png;
       }
     }
@@ -131,6 +141,14 @@ function createHarness(shared = {}) {
   return { chrome, clickAction, message, navigate, shared, tab: shared.tabs[7], tabsUpdated };
 }
 
+async function armAndCapture(harness, comment, pageId = "page-0001", sender = { tab: harness.tab, documentId: "document-A" }) {
+  const armed = await harness.message({ type: "ARM_CAPTURE", pageId, comment });
+  assert.equal(armed.ok, true, armed.error);
+  const selectionId = Object.values((await harness.message({ type: "GET_STATE" })).state.drafts)
+    .find((draft) => draft.pageId === pageId).selectionId;
+  return harness.message({ type: "CAPTURE_READY", armId: armed.armId, selectionId }, sender);
+}
+
 test("missing sensitive tab metadata fails until an action event grants access and opens the global panel", async () => {
   const harness = createHarness();
   const beforeAction = await harness.message({ type: "ENABLE_TAB", tabId: 7 });
@@ -178,29 +196,39 @@ test("action authorization and session storage survive service-worker replacemen
   assert.equal(recovered.state.bridge.status, "disconnected");
 });
 
-test("capture is outlined, added only after PNG persistence, editable, and deletable", async () => {
+test("armed capture adds only after PNG persistence, retains failures for retry, and never duplicates", async () => {
   const harness = createHarness();
   harness.clickAction(7);
   await harness.message({ type: "ENABLE_TAB", tabId: 7 });
   const target = structuredClone(valid.pages[0].annotations[0].target);
   const sender = { tab: harness.tab, documentId: "document-A" };
-  assert.equal((await harness.message({ type: "TARGET_SELECTED", selectionId: "12345678-1234-4123-8123-123456789abc", target }, sender)).ok, true);
+  const selectionId = "12345678-1234-4123-8123-123456789abc";
+  assert.equal((await harness.message({ type: "TARGET_SELECTED", selectionId, target }, sender)).ok, true);
 
-  harness.shared.failNextSet = true;
-  const failed = await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Keep this retryable" });
+  const armed = await harness.message({ type: "ARM_CAPTURE", pageId: "page-0001", comment: "Keep this retryable" });
+  assert.equal(armed.ok, true);
+  harness.shared.failSetOnCall = harness.shared.setCalls + 2;
+  const failed = await harness.message({ type: "CAPTURE_READY", armId: armed.armId, selectionId }, sender);
   assert.equal(failed.ok, false);
   assert.match(failed.error, /session quota failure/);
   let current = await harness.message({ type: "GET_STATE" });
   assert.equal(current.state.annotationCount, 0);
-  assert.ok(current.state.drafts["page-0001"]);
+  assert.equal(current.state.drafts["page-0001"].comment, "Keep this retryable");
+  assert.equal(current.state.drafts["page-0001"].armed, undefined);
   assert.equal(harness.shared.calls.filter((call) => call[0] === "captureVisibleTab").length, 1);
   assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "CLEAR_CAPTURE"));
 
-  const accepted = await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Keep this retryable" });
-  assert.equal(accepted.ok, true);
+  const accepted = await armAndCapture(harness, "Keep this retryable");
+  assert.equal(accepted.ok, true, accepted.error);
   current = await harness.message({ type: "GET_STATE" });
   assert.equal(current.state.annotationCount, 1);
   assert.equal(Object.keys(current.state.drafts).length, 0);
+  assert.equal(harness.shared.calls.filter((call) => call[0] === "captureVisibleTab").length, 2);
+  assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "COMPLETE_CAPTURE"));
+
+  const duplicate = await harness.message({ type: "CAPTURE_READY", armId: armed.armId, selectionId }, sender);
+  assert.equal(duplicate.ok, false);
+  assert.equal((await harness.message({ type: "GET_STATE" })).state.annotationCount, 1);
   assert.equal(harness.shared.calls.filter((call) => call[0] === "captureVisibleTab").length, 2);
 
   await harness.message({ type: "EDIT_COMMENT", annotationId: "annotation-0001", comment: "Edited without recapture" });
@@ -213,6 +241,36 @@ test("capture is outlined, added only after PNG persistence, editable, and delet
   assert.equal(current.state.annotationCount, 0);
   const storageState = Object.values(harness.shared.storage)[0];
   assert.deepEqual(storageState.screenshots, {});
+  assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "UNBIND_ANNOTATION"));
+});
+
+test("screenshot failure disarms without a partial annotation and preserves retryable input", async () => {
+  const harness = createHarness();
+  harness.clickAction(7);
+  await harness.message({ type: "ENABLE_TAB", tabId: 7 });
+  const sender = { tab: harness.tab, documentId: "document-A" };
+  const selectionId = "12345678-1234-4123-8123-123456789abc";
+  await harness.message({
+    type: "TARGET_SELECTED",
+    selectionId,
+    target: structuredClone(valid.pages[0].annotations[0].target)
+  }, sender);
+  const armed = await harness.message({ type: "ARM_CAPTURE", pageId: "page-0001", comment: "Retry after screenshot failure" });
+  harness.shared.captureError = "forced capture failure";
+  const failed = await harness.message({ type: "CAPTURE_READY", armId: armed.armId, selectionId }, sender);
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /forced capture failure/);
+  let current = (await harness.message({ type: "GET_STATE" })).state;
+  assert.equal(current.annotationCount, 0);
+  assert.equal(current.drafts["page-0001"].comment, "Retry after screenshot failure");
+  assert.equal(current.drafts["page-0001"].armed, undefined);
+  assert.match(current.drafts["page-0001"].captureError, /forced capture failure/);
+
+  harness.shared.captureError = null;
+  assert.equal((await armAndCapture(harness, "Retry after screenshot failure")).ok, true);
+  current = (await harness.message({ type: "GET_STATE" })).state;
+  assert.equal(current.annotationCount, 1);
+  assert.equal(Object.keys(current.drafts).length, 0);
 });
 
 test("navigation revokes document enablement without deleting accepted annotations", async () => {
@@ -224,7 +282,7 @@ test("navigation revokes document enablement without deleting accepted annotatio
     selectionId: "12345678-1234-4123-8123-123456789abc",
     target: structuredClone(valid.pages[0].annotations[0].target)
   }, { tab: harness.tab, documentId: "document-A" });
-  await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Persist after navigation" });
+  assert.equal((await armAndCapture(harness, "Persist after navigation")).ok, true);
   harness.navigate(7, "https://example.com/next");
   let current = await harness.message({ type: "GET_STATE" });
   assert.equal(current.state.annotationCount, 1);
@@ -237,6 +295,105 @@ test("navigation revokes document enablement without deleting accepted annotatio
   assert.equal((await harness.message({ type: "ENABLE_TAB", tabId: 7 })).ok, true);
   current = await harness.message({ type: "GET_STATE" });
   assert.equal(current.state.annotationCount, 1);
+});
+
+test("Pause and Resume persist per-document mode, retain drafts, and reject selection while paused", async () => {
+  const harness = createHarness();
+  harness.clickAction(7);
+  await harness.message({ type: "ENABLE_TAB", tabId: 7 });
+  const sender = { tab: harness.tab, documentId: "document-A" };
+  const target = structuredClone(valid.pages[0].annotations[0].target);
+  const selectionId = "12345678-1234-4123-8123-123456789abc";
+  await harness.message({ type: "TARGET_SELECTED", selectionId, target }, sender);
+  const armed = await harness.message({ type: "ARM_CAPTURE", pageId: "page-0001", comment: "Retain through pause" });
+  assert.equal(armed.ok, true);
+
+  harness.shared.failSetOnCall = harness.shared.setCalls + 1;
+  const failedPause = await harness.message({ type: "PAUSE_DOCUMENT", tabId: 7 });
+  assert.equal(failedPause.ok, false);
+  assert.match(failedPause.error, /session quota failure/);
+  let current = await harness.message({ type: "GET_STATE" });
+  assert.equal(current.state.enabled["7"].mode, "active");
+  assert.ok(current.state.drafts["page-0001"].armed);
+  assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "RESUME_ANNOTATION"));
+  assert.ok(harness.shared.calls.filter((call) => call[0] === "tabs.sendMessage" && call[2].type === "ARM_CAPTURE").length >= 2);
+
+  const paused = await harness.message({ type: "PAUSE_DOCUMENT", tabId: 7 });
+  assert.equal(paused.ok, true, paused.error);
+  current = await harness.message({ type: "GET_STATE" });
+  assert.equal(current.state.enabled["7"].mode, "paused");
+  assert.equal(current.state.drafts["page-0001"].selectionId, selectionId);
+  assert.equal(current.state.drafts["page-0001"].comment, "Retain through pause");
+  assert.equal(current.state.drafts["page-0001"].armed, undefined);
+  assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "PAUSE_ANNOTATION"));
+
+  const rejected = await harness.message({
+    type: "TARGET_SELECTED",
+    selectionId: "22345678-1234-4123-8123-123456789abc",
+    target
+  }, sender);
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /Resume annotation/);
+
+  const replacement = createHarness(harness.shared);
+  current = await replacement.message({ type: "GET_STATE" });
+  assert.equal(current.state.enabled["7"].mode, "paused", "mode survives worker replacement");
+  assert.equal((await replacement.message({ type: "RESUME_DOCUMENT", tabId: 7 })).ok, true);
+  current = await replacement.message({ type: "GET_STATE" });
+  assert.equal(current.state.enabled["7"].mode, "active");
+
+  const stored = Object.values(harness.shared.storage)[0];
+  delete stored.enabled["7"].mode;
+  const olderEntry = createHarness(harness.shared);
+  assert.equal((await olderEntry.message({
+    type: "TARGET_SELECTED",
+    selectionId: "32345678-1234-4123-8123-123456789abc",
+    target
+  }, sender)).ok, true, "an older enabled entry defaults to active");
+});
+
+test("Highlight is exact-document and active-tab gated and does not mutate paused session state", async () => {
+  const harness = createHarness();
+  harness.clickAction(7);
+  await harness.message({ type: "ENABLE_TAB", tabId: 7 });
+  const sender = { tab: harness.tab, documentId: "document-A" };
+  await harness.message({
+    type: "TARGET_SELECTED",
+    selectionId: "12345678-1234-4123-8123-123456789abc",
+    target: structuredClone(valid.pages[0].annotations[0].target)
+  }, sender);
+  assert.equal((await armAndCapture(harness, "Highlight me")).ok, true);
+  await harness.message({ type: "PAUSE_DOCUMENT", tabId: 7 });
+  const before = (await harness.message({ type: "GET_STATE" })).state;
+  const highlighted = await harness.message({ type: "HIGHLIGHT_ANNOTATION", annotationId: "annotation-0001" });
+  assert.equal(highlighted.ok, true, highlighted.error);
+  const after = (await harness.message({ type: "GET_STATE" })).state;
+  assert.deepEqual(after, before);
+  assert.ok(harness.shared.calls.some((call) => call[0] === "tabs.sendMessage" && call[2].type === "HIGHLIGHT_TARGET" && call[2].annotationId === "annotation-0001"));
+
+  harness.shared.currentWindowId = 99;
+  const otherWindow = await harness.message({ type: "HIGHLIGHT_ANNOTATION", annotationId: "annotation-0001" });
+  assert.equal(otherWindow.ok, false);
+  assert.match(otherWindow.error, /Switch to the annotation's source tab/);
+  harness.shared.currentWindowId = 2;
+  harness.shared.tabs[7].active = false;
+  const background = await harness.message({ type: "HIGHLIGHT_ANNOTATION", annotationId: "annotation-0001" });
+  assert.equal(background.ok, false);
+  assert.match(background.error, /Switch to the annotation's source tab/);
+  harness.shared.tabs[7].active = true;
+  harness.shared.tabMessage = async (_tabId, message) => message.type === "HIGHLIGHT_TARGET"
+    ? { ok: false, error: "Highlight is unavailable because the exact live target is gone." }
+    : { ok: true };
+  const detached = await harness.message({ type: "HIGHLIGHT_ANNOTATION", annotationId: "annotation-0001" });
+  assert.equal(detached.ok, false);
+  assert.match(detached.error, /exact live target is gone/);
+
+  harness.shared.tabMessage = null;
+  harness.navigate(7, "https://example.com/replaced");
+  await new Promise((resolve) => setImmediate(resolve));
+  const replaced = await harness.message({ type: "HIGHLIGHT_ANNOTATION", annotationId: "annotation-0001" });
+  assert.equal(replaced.ok, false);
+  assert.match(replaced.error, /source document was replaced or closed/);
 });
 
 test("each new tab requires its own toolbar authorization and explicit enable", async () => {
@@ -263,7 +420,7 @@ test("restricted pages fail clearly without deleting pending annotations", async
     selectionId: "12345678-1234-4123-8123-123456789abc",
     target: structuredClone(valid.pages[0].annotations[0].target)
   }, { tab: harness.tab, documentId: "document-A" });
-  await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Retain me" });
+  assert.equal((await armAndCapture(harness, "Retain me")).ok, true);
 
   harness.shared.tabs[8].url = "chrome://extensions";
   harness.clickAction(8);
@@ -320,7 +477,7 @@ test("connected bridge finish transfers a validated bundle and clears only after
     selectionId: "12345678-1234-4123-8123-123456789abc",
     target: structuredClone(valid.pages[0].annotations[0].target)
   }, { tab: harness.tab, documentId: "document-A" });
-  await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Bridge save" });
+  assert.equal((await armAndCapture(harness, "Bridge save")).ok, true);
 
   const connected = await harness.message({ type: "CHECK_BRIDGE" });
   assert.equal(connected.bridge.status, "connected");
@@ -355,7 +512,7 @@ test("bridge loss preserves pending browser state and reports capability-neutral
     selectionId: "12345678-1234-4123-8123-123456789abc",
     target: structuredClone(valid.pages[0].annotations[0].target)
   }, { tab: harness.tab, documentId: "document-A" });
-  await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Keep after loss" });
+  assert.equal((await armAndCapture(harness, "Keep after loss")).ok, true);
   assert.equal((await harness.message({ type: "CHECK_BRIDGE" })).bridge.status, "connected");
   const failed = await harness.message({ type: "FINISH_BRIDGE" });
   assert.equal(failed.ok, false);
@@ -374,7 +531,7 @@ test("completion refuses to clear state changed after the saved snapshot", async
     selectionId: "12345678-1234-4123-8123-123456789abc",
     target: structuredClone(valid.pages[0].annotations[0].target)
   }, { tab: harness.tab, documentId: "document-A" });
-  await harness.message({ type: "ACCEPT_COMMENT", pageId: "page-0001", comment: "Snapshot" });
+  assert.equal((await armAndCapture(harness, "Snapshot")).ok, true);
   const finish = await harness.message({ type: "GET_FINISH_DATA" });
   await harness.message({ type: "EDIT_COMMENT", annotationId: "annotation-0001", comment: "Newer state" });
   const completion = await harness.message({ type: "COMPLETE_SESSION", revision: finish.data.revision });

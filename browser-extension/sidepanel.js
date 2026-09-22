@@ -18,6 +18,7 @@
   let activeTab = null;
   let busy = false;
   const draftViews = new Map();
+  const annotationViews = new Map();
 
   function setError(message) {
     elements.error.textContent = message || "";
@@ -41,9 +42,7 @@
 
   function setBusy(value) {
     busy = value;
-    elements.enable.disabled = value;
-    elements.cancel.disabled = value;
-    elements.finish.disabled = value || !state || state.annotationCount === 0 || saveMode() === "unavailable";
+    render();
   }
 
   async function send(message) {
@@ -65,6 +64,10 @@
     return state.pages.find((page) => page.id === pageId);
   }
 
+  function enabledMode(entry) {
+    return entry && entry.mode === "paused" ? "paused" : "active";
+  }
+
   function createDraftView(draft) {
     const card = document.createElement("form");
     card.className = "card";
@@ -74,14 +77,43 @@
     textarea.required = true;
     textarea.maxLength = PiAnnotatorConstants.LIMITS.commentCharacters;
     textarea.placeholder = "Describe the requested change or observation…";
-    const submit = button("Accept comment and capture", () => {}, "");
+    textarea.value = draft.comment || "";
+    const error = document.createElement("p");
+    error.className = "inline-error";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const submit = button("Arm capture on re-hover", () => {}, "");
     submit.type = "submit";
+    const cancelArm = button("Cancel armed capture", () => {}, "secondary");
+    const view = { card, context, textarea, error, actions, submit, cancelArm, draft };
     card.addEventListener("submit", async (event) => {
       event.preventDefault();
-      await runAction({ type: "ACCEPT_COMMENT", pageId: draft.pageId, comment: textarea.value });
+      if (view.draft.armed) return;
+      await runAction({ type: "ARM_CAPTURE", pageId: view.draft.pageId, comment: textarea.value });
     });
-    card.append(context, textarea, submit);
-    return { card, context, textarea };
+    cancelArm.addEventListener("click", async () => {
+      await runAction({
+        type: "CANCEL_ARMED_CAPTURE",
+        pageId: view.draft.pageId,
+        selectionId: view.draft.selectionId
+      });
+    });
+    actions.append(submit, cancelArm);
+    card.append(context, textarea, error, actions);
+    return view;
+  }
+
+  function updateDraftView(view, draft, page) {
+    view.draft = draft;
+    view.context.textContent = `${page.title || page.url} · <${draft.target.tag_name}>`;
+    const armed = Boolean(draft.armed);
+    view.textarea.readOnly = armed;
+    view.submit.textContent = armed ? "Armed — re-hover the selected target" : "Arm capture on re-hover";
+    view.submit.disabled = busy || armed || Boolean(draft.targetInvalid);
+    view.cancelArm.hidden = !armed;
+    view.cancelArm.disabled = busy;
+    view.error.textContent = draft.captureError || "";
+    view.error.hidden = !draft.captureError;
   }
 
   function renderDrafts() {
@@ -108,7 +140,7 @@
         view = createDraftView(draft);
         draftViews.set(draft.selectionId, view);
       }
-      view.context.textContent = `${page.title || page.url} · <${draft.target.tag_name}>`;
+      updateDraftView(view, draft, page);
       cards.push(view.card);
     }
     const currentCards = Array.from(elements.drafts.children);
@@ -117,49 +149,93 @@
     }
   }
 
+  function setAnnotationEditMode(view, editing) {
+    view.editing = editing;
+    view.comment.hidden = editing;
+    view.displayActions.hidden = editing;
+    view.editor.hidden = !editing;
+    view.editActions.hidden = !editing;
+  }
+
+  function createAnnotationView(annotation) {
+    const card = document.createElement("article");
+    card.className = "card";
+    const meta = document.createElement("p");
+    meta.className = "meta";
+    const comment = document.createElement("p");
+    const displayActions = document.createElement("div");
+    displayActions.className = "actions";
+    const editor = document.createElement("textarea");
+    editor.maxLength = PiAnnotatorConstants.LIMITS.commentCharacters;
+    const editActions = document.createElement("div");
+    editActions.className = "actions";
+    const view = { card, meta, comment, displayActions, editor, editActions, annotation, page: null, editing: false };
+
+    displayActions.append(
+      button("Highlight", () => runAction({ type: "HIGHLIGHT_ANNOTATION", annotationId: view.annotation.id })),
+      button("Edit", () => {
+        view.editor.value = view.annotation.comment;
+        setAnnotationEditMode(view, true);
+        view.editor.focus();
+      }),
+      button("Delete", () => runAction({ type: "DELETE_ANNOTATION", annotationId: view.annotation.id }), "danger")
+    );
+    editActions.append(
+      button("Save edit", async () => {
+        const saved = await runAction({ type: "EDIT_COMMENT", annotationId: view.annotation.id, comment: view.editor.value });
+        if (saved) setAnnotationEditMode(view, false);
+      }),
+      button("Keep original", () => {
+        view.editor.value = view.annotation.comment;
+        setAnnotationEditMode(view, false);
+      }, "secondary")
+    );
+    card.append(meta, comment, displayActions, editor, editActions);
+    setAnnotationEditMode(view, false);
+    return view;
+  }
+
+  function updateAnnotationView(view, annotation, page) {
+    view.annotation = annotation;
+    view.page = page;
+    view.meta.textContent = `${page.title || page.url} · ${annotation.target.tag_name} · ${annotation.id}`;
+    view.comment.textContent = annotation.comment;
+    for (const control of [...view.displayActions.children, ...view.editActions.children]) control.disabled = busy;
+  }
+
   function renderAnnotations() {
-    elements.annotations.replaceChildren();
     elements.count.textContent = String(state.annotationCount);
-    if (state.annotationCount === 0) {
+    const annotations = [];
+    for (const page of state.pages) {
+      for (const annotation of page.annotations) annotations.push({ annotation, page });
+    }
+    const annotationIds = new Set(annotations.map(({ annotation }) => annotation.id));
+    for (const annotationId of annotationViews.keys()) {
+      if (!annotationIds.has(annotationId)) annotationViews.delete(annotationId);
+    }
+
+    if (annotations.length === 0) {
       const empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = "No annotations yet.";
-      elements.annotations.append(empty);
+      elements.annotations.replaceChildren(empty);
       return;
     }
-    for (const page of state.pages) {
-      for (const annotation of page.annotations) {
-        const card = document.createElement("article");
-        card.className = "card";
-        const meta = document.createElement("p");
-        meta.className = "meta";
-        meta.textContent = `${page.title || page.url} · ${annotation.target.tag_name} · ${annotation.id}`;
-        const comment = document.createElement("p");
-        comment.textContent = annotation.comment;
-        const actions = document.createElement("div");
-        actions.className = "actions";
-        actions.append(
-          button("Edit", () => showEditor(card, annotation)),
-          button("Delete", () => runAction({ type: "DELETE_ANNOTATION", annotationId: annotation.id }), "danger")
-        );
-        card.append(meta, comment, actions);
-        elements.annotations.append(card);
-      }
-    }
-  }
 
-  function showEditor(card, annotation) {
-    const textarea = document.createElement("textarea");
-    textarea.maxLength = PiAnnotatorConstants.LIMITS.commentCharacters;
-    textarea.value = annotation.comment;
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    actions.append(
-      button("Save edit", () => runAction({ type: "EDIT_COMMENT", annotationId: annotation.id, comment: textarea.value })),
-      button("Keep original", render, "secondary")
-    );
-    card.replaceChildren(textarea, actions);
-    textarea.focus();
+    const cards = [];
+    for (const { annotation, page } of annotations) {
+      let view = annotationViews.get(annotation.id);
+      if (!view) {
+        view = createAnnotationView(annotation);
+        annotationViews.set(annotation.id, view);
+      }
+      updateAnnotationView(view, annotation, page);
+      cards.push(view.card);
+    }
+    const currentCards = Array.from(elements.annotations.children);
+    if (currentCards.length !== cards.length || currentCards.some((card, index) => card !== cards[index])) {
+      elements.annotations.replaceChildren(...cards);
+    }
   }
 
   function render() {
@@ -173,11 +249,14 @@
       elements.bridgeStatus.textContent = "Pi bridge: disconnected. Finish is unavailable in this browser; run /annotate in an interactive Pi session. Pending work is retained.";
     }
     const enabled = activeTab && state.enabled[String(activeTab.id)];
+    const documentMode = enabledMode(enabled);
     elements.pageDetail.textContent = activeTab
-      ? `${activeTab.title || activeTab.url || "Active tab"}${enabled ? " — annotation enabled for this document" : " — not enabled"}`
+      ? `${activeTab.title || activeTab.url || "Active tab"}${enabled ? ` — annotation ${documentMode} for this document` : " — not enabled"}`
       : "No active browser tab is available.";
-    elements.enable.textContent = enabled ? "Annotation enabled for this document" : "Enable annotation on this page";
-    elements.enable.disabled = busy || !activeTab || Boolean(enabled);
+    elements.enable.textContent = !enabled
+      ? "Enable annotation on this page"
+      : documentMode === "paused" ? "Resume annotation" : "Pause annotation";
+    elements.enable.disabled = busy || !activeTab;
     elements.cancel.disabled = busy || (state.annotationCount === 0 && Object.keys(state.drafts).length === 0);
     elements.finish.disabled = busy || state.annotationCount === 0 || mode === "unavailable";
     renderDrafts();
@@ -218,16 +297,21 @@
     try {
       await send(message);
       await refresh();
+      return true;
     } catch (error) {
       setError(error.message);
+      return false;
     } finally {
       setBusy(false);
-      render();
     }
   }
 
   elements.enable.addEventListener("click", () => {
-    if (activeTab) runAction({ type: "ENABLE_TAB", tabId: activeTab.id });
+    if (!activeTab) return;
+    const enabled = state && state.enabled[String(activeTab.id)];
+    if (!enabled) runAction({ type: "ENABLE_TAB", tabId: activeTab.id });
+    else if (enabledMode(enabled) === "paused") runAction({ type: "RESUME_DOCUMENT", tabId: activeTab.id });
+    else runAction({ type: "PAUSE_DOCUMENT", tabId: activeTab.id });
   });
 
   elements.cancel.addEventListener("click", () => {
@@ -271,7 +355,6 @@
       else setError(`Save failed: ${error.message}. Pending annotations were retained for retry.`);
     } finally {
       setBusy(false);
-      render();
     }
   }
 
@@ -289,7 +372,6 @@
       await refresh();
     } finally {
       setBusy(false);
-      render();
     }
   }
 
